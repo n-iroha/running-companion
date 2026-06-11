@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Running Companion</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ff5a1f">
+<script src="marked.min.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 0 auto; max-width: 720px;
+         padding: calc(env(safe-area-inset-top) + 8px) 16px calc(env(safe-area-inset-bottom) + 16px); }
+  header { display: flex; gap: 6px; align-items: center; padding: 8px 0; flex-wrap: wrap; }
+  button { font-size: 16px; padding: 8px 12px; border-radius: 8px; border: 1px solid #8884; background: transparent; }
+  #run { background: #ff5a1f; color: #fff; border: none; font-weight: 600; }
+  #run:disabled { opacity: .5; }
+  #date { font-size: 16px; padding: 6px; border-radius: 8px; border: 1px solid #8884; background: transparent; flex: 1; min-width: 130px; }
+  #status { font-size: 14px; opacity: .8; min-height: 1.4em; padding: 4px 0; }
+  #content { line-height: 1.75; word-break: break-word; }
+  #content table { border-collapse: collapse; display: block; overflow-x: auto; }
+  #content th, #content td { border: 1px solid #8886; padding: 4px 8px; white-space: nowrap; }
+  #content code { background: #8882; padding: 1px 4px; border-radius: 4px; }
+  dialog { border: 1px solid #8886; border-radius: 12px; width: min(90vw, 420px); }
+  dialog::backdrop { background: #0006; }
+  input { width: 100%; font-size: 16px; padding: 8px; box-sizing: border-box; }
+  .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <button id="prev" aria-label="前日">◀</button>
+  <input type="date" id="date">
+  <button id="next" aria-label="翌日">▶</button>
+  <button id="run">実行</button>
+  <button id="settings" aria-label="設定">⚙︎</button>
+</header>
+<div id="status"></div>
+<article id="content"></article>
+
+<dialog id="dlg">
+  <h3>設定</h3>
+  <p style="font-size:14px">GitHub Personal Access Token(fine-grained / 対象: n-iroha/Running / 権限: Contents Read + Actions Read and write)</p>
+  <input id="pat" type="password" placeholder="github_pat_..." autocomplete="off">
+  <div class="row">
+    <button id="patClear">削除</button>
+    <button id="patSave">保存</button>
+  </div>
+</dialog>
+
+<script>
+const REPO = 'n-iroha/Running';
+const WORKFLOW = 'run-eval.yml';
+const API = 'https://api.github.com';
+const EVAL_DIR = 'daily_evaluations';
+const $ = (id) => document.getElementById(id);
+const pat = () => localStorage.getItem('gh_pat') || '';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function gh(path, opts = {}) {
+  return fetch(API + path, {
+    ...opts,
+    headers: {
+      'Authorization': 'Bearer ' + pat(),
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(opts.headers || {}),
+    },
+  });
+}
+
+function jstToday() { return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }
+function addDays(iso, n) {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+async function showDate(iso) {
+  $('date').value = iso;
+  $('content').innerHTML = '';
+  $('status').textContent = '読み込み中…';
+  let res;
+  try {
+    res = await gh(`/repos/${REPO}/contents/${EVAL_DIR}/eval_${iso}.md`,
+      { headers: { 'Accept': 'application/vnd.github.raw+json' } });
+  } catch {
+    $('status').textContent = 'オフラインです';
+    return;
+  }
+  if (res.status === 404) {
+    $('status').textContent = '';
+    $('content').innerHTML = '<p>この日の評価はありません。昨日の分が未生成であれば「実行」で routine を起動できます。</p>';
+    return;
+  }
+  if (res.status === 401 || res.status === 403) {
+    $('status').textContent = 'トークンを確認してください';
+    $('dlg').showModal();
+    return;
+  }
+  if (!res.ok) { $('status').textContent = `エラー: HTTP ${res.status}`; return; }
+  const md = await res.text();
+  $('status').textContent = '';
+  $('content').innerHTML = marked.parse(md);
+  window.scrollTo(0, 0);
+}
+
+async function showLatest() {
+  try {
+    const res = await gh(`/repos/${REPO}/contents/${EVAL_DIR}`);
+    if (res.status === 401 || res.status === 403) {
+      $('status').textContent = 'トークンを確認してください';
+      $('dlg').showModal();
+      return;
+    }
+    if (res.ok) {
+      const items = await res.json();
+      const dates = items
+        .map((i) => (i.name.match(/^eval_(\d{4}-\d{2}-\d{2})\.md$/) || [])[1])
+        .filter(Boolean)
+        .sort();
+      if (dates.length) return showDate(dates[dates.length - 1]);
+    }
+  } catch {
+    $('status').textContent = 'オフラインです';
+    return;
+  }
+  showDate(addDays(jstToday(), -1));
+}
+
+async function runRoutine() {
+  if (!pat()) { $('dlg').showModal(); return; }
+  $('run').disabled = true;
+  $('status').textContent = '実行リクエスト送信中…';
+  const dispatchedAt = new Date().toISOString();
+  let res;
+  try {
+    res = await gh(`/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`, {
+      method: 'POST',
+      body: JSON.stringify({ ref: 'main' }),
+    });
+  } catch {
+    $('status').textContent = 'オフラインです';
+    $('run').disabled = false;
+    return;
+  }
+  if (res.status !== 204) {
+    $('status').textContent = `起動失敗: HTTP ${res.status}`;
+    $('run').disabled = false;
+    return;
+  }
+  $('status').textContent = '起動中…';
+  let fired = false;
+  for (let i = 0; i < 30; i++) {
+    await sleep(10000);
+    const runsRes = await gh(`/repos/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=1`).catch(() => null);
+    if (!runsRes || !runsRes.ok) continue;
+    const run = (await runsRes.json()).workflow_runs?.[0];
+    if (!run || run.created_at < dispatchedAt) continue;
+    if (run.status === 'completed') {
+      if (run.conclusion === 'success') { fired = true; }
+      else { $('status').textContent = `起動失敗: ${run.conclusion}(GitHub Actionsを確認)`; }
+      break;
+    }
+    $('status').textContent = `起動中…(${run.status})`;
+  }
+  if (!fired) { $('run').disabled = false; if (!$('status').textContent.includes('失敗')) $('status').textContent = '起動確認タイムアウト'; return; }
+  const target = addDays(jstToday(), -1);
+  $('status').textContent = `routine実行中… eval_${target}.md の生成を待っています(画面を開いたままにしてください)`;
+  for (let i = 0; i < 30; i++) {
+    await sleep(30000);
+    const check = await gh(`/repos/${REPO}/contents/${EVAL_DIR}/eval_${target}.md`).catch(() => null);
+    if (check && check.ok) {
+      $('status').textContent = '';
+      $('run').disabled = false;
+      return showDate(target);
+    }
+  }
+  $('status').textContent = '15分待ちましたが評価が見つかりません。しばらく後に日付を選び直してください。';
+  $('run').disabled = false;
+}
+
+$('prev').onclick = () => showDate(addDays($('date').value || jstToday(), -1));
+$('next').onclick = () => showDate(addDays($('date').value || jstToday(), 1));
+$('date').onchange = () => $('date').value && showDate($('date').value);
+$('run').onclick = runRoutine;
+$('settings').onclick = () => { $('pat').value = pat(); $('dlg').showModal(); };
+$('patSave').onclick = () => {
+  localStorage.setItem('gh_pat', $('pat').value.trim());
+  $('dlg').close();
+  boot();
+};
+$('patClear').onclick = () => { localStorage.removeItem('gh_pat'); $('pat').value = ''; };
+
+function boot() {
+  if (!pat()) { $('dlg').showModal(); return; }
+  showLatest();
+}
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
+boot();
+</script>
+</body>
+</html>

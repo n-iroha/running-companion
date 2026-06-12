@@ -53,14 +53,16 @@
 </dialog>
 
 <script>
-const REPO = 'n-iroha/Running';
-const WORKFLOW = 'run-eval.yml';
-const API = 'https://api.github.com';
-const EVAL_DIR = 'daily_evaluations';
-const $ = (id) => document.getElementById(id);
-const pat = () => localStorage.getItem('gh_pat') || '';
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// ===== 定数・ユーティリティ =====
+const REPO = 'n-iroha/Running';          // 評価ファイルとワークフローを置いている GitHub リポジトリ
+const WORKFLOW = 'run-eval.yml';         // 「実行」ボタンで起動する GitHub Actions ワークフロー
+const API = 'https://api.github.com';    // GitHub REST API のベースURL
+const EVAL_DIR = 'daily_evaluations';    // リポジトリ内で日次評価(eval_YYYY-MM-DD.md)を格納するディレクトリ
+const $ = (id) => document.getElementById(id);                  // 要素取得の短縮形
+const pat = () => localStorage.getItem('gh_pat') || '';         // 保存済みの GitHub Personal Access Token を返す
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));    // 指定ミリ秒待つ(ポーリング用)
 
+// GitHub API を呼ぶ共通ラッパー。PAT の Authorization ヘッダーを自動で付ける
 function gh(path, opts = {}) {
   return fetch(API + path, {
     ...opts,
@@ -72,42 +74,52 @@ function gh(path, opts = {}) {
   });
 }
 
+// 日本時間(UTC+9)での今日の日付を 'YYYY-MM-DD' 形式で返す
 function jstToday() { return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }
+// 'YYYY-MM-DD' 形式の日付に n 日を加算して同じ形式で返す(n が負なら過去日)
 function addDays(iso, n) {
   const d = new Date(iso + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
 
+// ===== 評価の表示 =====
+// 指定日(iso = 'YYYY-MM-DD')の評価 Markdown をリポジトリから取得して画面に描画する
 async function showDate(iso) {
   $('date').value = iso;
   $('content').innerHTML = '';
   $('status').textContent = '読み込み中…';
   let res;
   try {
+    // Contents API から eval_YYYY-MM-DD.md を生の Markdown テキストとして取得
     res = await gh(`/repos/${REPO}/contents/${EVAL_DIR}/eval_${iso}.md`,
       { headers: { 'Accept': 'application/vnd.github.raw+json' } });
   } catch {
+    // fetch 自体の失敗 = ネットワーク未接続
     $('status').textContent = 'オフラインです';
     return;
   }
   if (res.status === 404) {
+    // ファイルが存在しない = その日の評価が未生成
     $('status').textContent = '';
     $('content').innerHTML = '<p>この日の評価はありません。昨日の分が未生成であれば「実行」で routine を起動できます。</p>';
     return;
   }
   if (res.status === 401 || res.status === 403) {
+    // 認証エラー = PAT が無効・期限切れなので設定ダイアログを開く
     $('status').textContent = 'トークンを確認してください';
     $('dlg').showModal();
     return;
   }
   if (!res.ok) { $('status').textContent = `エラー: HTTP ${res.status}`; return; }
+  // Markdown を HTML に変換して表示(marked.min.js を使用)
   const md = await res.text();
   $('status').textContent = '';
   $('content').innerHTML = marked.parse(md);
   window.scrollTo(0, 0);
 }
 
+// 起動時に呼ばれる。評価ディレクトリの一覧から最新日付の評価を探して表示する
 async function showLatest() {
   try {
     const res = await gh(`/repos/${REPO}/contents/${EVAL_DIR}`);
@@ -117,6 +129,7 @@ async function showLatest() {
       return;
     }
     if (res.ok) {
+      // ファイル名 eval_YYYY-MM-DD.md から日付部分を抜き出し、昇順ソートして最新を選ぶ
       const items = await res.json();
       const dates = items
         .map((i) => (i.name.match(/^eval_(\d{4}-\d{2}-\d{2})\.md$/) || [])[1])
@@ -128,16 +141,21 @@ async function showLatest() {
     $('status').textContent = 'オフラインです';
     return;
   }
+  // 一覧が取れない・評価ファイルが1つもない場合は昨日の日付で表示を試みる
   showDate(addDays(jstToday(), -1));
 }
 
+// ===== routine の実行 =====
+// 「実行」ボタンの処理。GitHub Actions のワークフローを起動し、
+// (1) ワークフローの完了 → (2) 評価ファイルの生成 の2段階をポーリングで見届ける
 async function runRoutine() {
-  if (!pat()) { $('dlg').showModal(); return; }
-  $('run').disabled = true;
+  if (!pat()) { $('dlg').showModal(); return; }   // PAT 未設定なら先に設定ダイアログを開く
+  $('run').disabled = true;                       // 二重起動を防ぐためボタンを無効化
   $('status').textContent = '実行リクエスト送信中…';
-  const dispatchedAt = new Date().toISOString();
+  const dispatchedAt = new Date().toISOString();  // この時刻以降に作られた run だけを自分の起動とみなす
   let res;
   try {
+    // workflow_dispatch イベントでワークフローを起動(main ブランチ上で実行)
     res = await gh(`/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`, {
       method: 'POST',
       body: JSON.stringify({ ref: 'main' }),
@@ -147,11 +165,13 @@ async function runRoutine() {
     $('run').disabled = false;
     return;
   }
+  // dispatch API は成功すると 204 No Content を返す。それ以外は起動失敗
   if (res.status !== 204) {
     $('status').textContent = `起動失敗: HTTP ${res.status}`;
     $('run').disabled = false;
     return;
   }
+  // --- 第1段階: ワークフロー run の完了を待つ(10秒間隔 × 最大30回 = 最大5分) ---
   $('status').textContent = '起動中…';
   let fired = false;
   for (let i = 0; i < 30; i++) {
@@ -159,6 +179,7 @@ async function runRoutine() {
     const runsRes = await gh(`/repos/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=1`).catch(() => null);
     if (!runsRes || !runsRes.ok) continue;
     const run = (await runsRes.json()).workflow_runs?.[0];
+    // dispatch 以前の古い run は無視(まだ自分の run が一覧に現れていない)
     if (!run || run.created_at < dispatchedAt) continue;
     if (run.status === 'completed') {
       if (run.conclusion === 'success') { fired = true; }
@@ -168,12 +189,14 @@ async function runRoutine() {
     $('status').textContent = `起動中…(${run.status})`;
   }
   if (!fired) { $('run').disabled = false; if (!$('status').textContent.includes('失敗')) $('status').textContent = '起動確認タイムアウト'; return; }
-  const target = addDays(jstToday(), -1);
+  // --- 第2段階: 昨日分の評価ファイルがコミットされるのを待つ(30秒間隔 × 最大30回 = 最大15分) ---
+  const target = addDays(jstToday(), -1);  // routine が生成するのは昨日(JST)の評価
   $('status').textContent = `routine実行中… eval_${target}.md の生成を待っています(画面を開いたままにしてください)`;
   for (let i = 0; i < 30; i++) {
     await sleep(30000);
     const check = await gh(`/repos/${REPO}/contents/${EVAL_DIR}/eval_${target}.md`).catch(() => null);
     if (check && check.ok) {
+      // ファイルが見つかったら表示して終了
       $('status').textContent = '';
       $('run').disabled = false;
       return showDate(target);
@@ -183,22 +206,28 @@ async function runRoutine() {
   $('run').disabled = false;
 }
 
-$('prev').onclick = () => showDate(addDays($('date').value || jstToday(), -1));
-$('next').onclick = () => showDate(addDays($('date').value || jstToday(), 1));
-$('date').onchange = () => $('date').value && showDate($('date').value);
-$('run').onclick = runRoutine;
-$('settings').onclick = () => { $('pat').value = pat(); $('dlg').showModal(); };
+// ===== イベントハンドラー =====
+$('prev').onclick = () => showDate(addDays($('date').value || jstToday(), -1));  // ◀: 前日へ
+$('next').onclick = () => showDate(addDays($('date').value || jstToday(), 1));   // ▶: 翌日へ
+$('date').onchange = () => $('date').value && showDate($('date').value);         // 日付ピッカーで直接選択
+$('run').onclick = runRoutine;                                                   // 実行: routine を起動
+$('settings').onclick = () => { $('pat').value = pat(); $('dlg').showModal(); }; // ⚙︎: 設定ダイアログを開く
+// 保存: 入力された PAT を localStorage に保存して再起動
 $('patSave').onclick = () => {
   localStorage.setItem('gh_pat', $('pat').value.trim());
   $('dlg').close();
   boot();
 };
+// 削除: 保存済みの PAT を消去
 $('patClear').onclick = () => { localStorage.removeItem('gh_pat'); $('pat').value = ''; };
 
+// ===== 起動処理 =====
+// PAT があれば最新の評価を表示、なければ設定ダイアログを開く
 function boot() {
   if (!pat()) { $('dlg').showModal(); return; }
   showLatest();
 }
+// PWA としてオフラインキャッシュを使うための Service Worker を登録
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
 boot();
 </script>

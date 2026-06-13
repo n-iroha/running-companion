@@ -18,7 +18,7 @@
 
 ## 仕組み
 
-- 実行ボタン → `n-iroha/Running` の GitHub Actions `run-eval.yml`(workflow_dispatch)→ claude.ai routine fire API
+- 実行ボタン → `n-iroha/Running` の GitHub Actions `run-eval.yml`(workflow_dispatch、`date` input に**ピッカーで選択中の日付**を渡す)→ claude.ai routine fire API
 - プレビュー → GitHub contents API → marked.js でレンダリング
 - 秘密情報はこのリポジトリに含まれない:
   - GitHub PATは端末のlocalStorageのみに保存

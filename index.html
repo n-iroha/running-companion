@@ -150,15 +150,18 @@ async function showLatest() {
 // (1) ワークフローの完了 → (2) 評価ファイルの生成 の2段階をポーリングで見届ける
 async function runRoutine() {
   if (!pat()) { $('dlg').showModal(); return; }   // PAT 未設定なら先に設定ダイアログを開く
+  // 日付ピッカーで選択中の日付を評価対象にする(未選択なら JST の今日)
+  const target = $('date').value || jstToday();
   $('run').disabled = true;                       // 二重起動を防ぐためボタンを無効化
   $('status').textContent = '実行リクエスト送信中…';
   const dispatchedAt = new Date().toISOString();  // この時刻以降に作られた run だけを自分の起動とみなす
   let res;
   try {
     // workflow_dispatch イベントでワークフローを起動(main ブランチ上で実行)
+    // 選択中の日付を inputs.date として渡し、その日の評価を生成させる
     res = await gh(`/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`, {
       method: 'POST',
-      body: JSON.stringify({ ref: 'main' }),
+      body: JSON.stringify({ ref: 'main', inputs: { date: target } }),
     });
   } catch {
     $('status').textContent = 'オフラインです';
@@ -189,8 +192,8 @@ async function runRoutine() {
     $('status').textContent = `起動中…(${run.status})`;
   }
   if (!fired) { $('run').disabled = false; if (!$('status').textContent.includes('失敗')) $('status').textContent = '起動確認タイムアウト'; return; }
-  // --- 第2段階: 昨日分の評価ファイルがコミットされるのを待つ(30秒間隔 × 最大30回 = 最大15分) ---
-  const target = addDays(jstToday(), -1);  // routine が生成するのは昨日(JST)の評価
+  // --- 第2段階: 対象日の評価ファイルがコミットされるのを待つ(30秒間隔 × 最大30回 = 最大15分) ---
+  // target は dispatch 時に渡した選択日。同じ日の eval が生成されるのを待つ
   $('status').textContent = `routine実行中… eval_${target}.md の生成を待っています(画面を開いたままにしてください)`;
   for (let i = 0; i < 30; i++) {
     await sleep(30000);

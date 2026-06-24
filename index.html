@@ -200,6 +200,7 @@ async function runRoutine() {
   $('status').textContent = `routine実行中… eval_${target}.md の生成を待っています(画面を開いたままにしてください)`;
   for (let i = 0; i < 30; i++) {
     await sleep(30000);
+    // routine(実行ボタン)は現状 Strava 専用なので、参照先は Strava 固定
     const check = await gh(`/repos/${REPO}/contents/${EVAL_DIRS.strava}/eval_${target}.md`).catch(() => null);
     if (check && check.ok) {
       // ファイルが見つかったら表示して終了

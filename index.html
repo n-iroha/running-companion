@@ -21,6 +21,9 @@
   #run:disabled { opacity: .5; }
   #date { font-size: 16px; padding: 6px; border-radius: 8px; border: 1px solid #8884; background: transparent; flex: 1; min-width: 130px; }
   #status { font-size: 14px; opacity: .8; min-height: 1.4em; padding: 4px 0; }
+  #tabs { display: flex; gap: 4px; margin: 4px 0 8px; }
+  #tabs button { flex: 1; font-size: 15px; padding: 6px 0; border: 1px solid #8884; background: transparent; opacity: .6; }
+  #tabs button[aria-pressed="true"] { opacity: 1; font-weight: 600; border-color: #ff5a1f; color: #ff5a1f; }
   #content { line-height: 1.75; word-break: break-word; }
   #content table { border-collapse: collapse; display: block; overflow-x: auto; }
   #content th, #content td { border: 1px solid #8886; padding: 4px 8px; white-space: nowrap; }
@@ -39,6 +42,10 @@
   <button id="run">実行</button>
   <button id="settings" aria-label="設定">⚙︎</button>
 </header>
+<div id="tabs" role="tablist">
+  <button id="tab-strava" aria-pressed="true">Strava</button>
+  <button id="tab-garmin" aria-pressed="false">Garmin</button>
+</div>
 <div id="status"></div>
 <article id="content"></article>
 
@@ -213,11 +220,25 @@ async function runRoutine() {
   $('run').disabled = false;
 }
 
+// 「実行」ボタンの有効/無効をソースに応じて切替える(Task 4 で本実装)
+function updateRunButton() {}
+
 // ===== イベントハンドラー =====
 $('prev').onclick = () => showDate(addDays($('date').value || jstToday(), -1));  // ◀: 前日へ
 $('next').onclick = () => showDate(addDays($('date').value || jstToday(), 1));   // ▶: 翌日へ
 $('date').onchange = () => $('date').value && showDate($('date').value);         // 日付ピッカーで直接選択
 $('run').onclick = runRoutine;                                                   // 実行: routine を起動
+// ソース切替。選択中の日付を維持したまま、新ソースの同じ日付の評価を再取得する
+function setSource(next) {
+  if (source === next) return;
+  source = next;
+  $('tab-strava').setAttribute('aria-pressed', String(source === 'strava'));
+  $('tab-garmin').setAttribute('aria-pressed', String(source === 'garmin'));
+  updateRunButton();
+  showDate($('date').value || jstToday());
+}
+$('tab-strava').onclick = () => setSource('strava');
+$('tab-garmin').onclick = () => setSource('garmin');
 $('settings').onclick = () => { $('pat').value = pat(); $('dlg').showModal(); }; // ⚙︎: 設定ダイアログを開く
 // 保存: 入力された PAT を localStorage に保存して再起動
 $('patSave').onclick = () => {

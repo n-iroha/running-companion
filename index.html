@@ -110,9 +110,11 @@ async function showDate(iso) {
     return;
   }
   if (res.status === 404) {
-    // ファイルが存在しない = その日の評価が未生成
+    // ファイルが存在しない = その日の評価が未生成。ソースごとに案内を変える
     $('status').textContent = '';
-    $('content').innerHTML = '<p>この日の評価はありません。昨日の分が未生成であれば「実行」で routine を起動できます。</p>';
+    $('content').innerHTML = source === 'garmin'
+      ? '<p>この日の Garmin版評価はありません。Mac で <code>garmin_eval.py</code> を実行して生成してください。</p>'
+      : '<p>この日の評価はありません。昨日の分が未生成であれば「実行」で routine を起動できます。</p>';
     return;
   }
   if (res.status === 401 || res.status === 403) {

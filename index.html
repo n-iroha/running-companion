@@ -45,6 +45,7 @@
 <div id="tabs">
   <button id="tab-strava" aria-pressed="true">Strava</button>
   <button id="tab-garmin" aria-pressed="false">Garmin</button>
+  <button id="tab-combined" aria-pressed="false">統合</button>
 </div>
 <div id="status"></div>
 <article id="content"></article>
@@ -65,7 +66,7 @@ const REPO = 'n-iroha/Running';          // 評価ファイルとワークフロ
 const WORKFLOW = 'run-eval.yml';         // 「実行」ボタンで起動する GitHub Actions ワークフロー
 const API = 'https://api.github.com';    // GitHub REST API のベースURL
 // 評価ソースごとの格納ディレクトリ。ファイル名は両ソースとも eval_YYYY-MM-DD.md で共通
-const EVAL_DIRS = { strava: 'daily_evaluations', garmin: 'garmin_evaluations' };
+const EVAL_DIRS = { strava: 'daily_evaluations', garmin: 'garmin_evaluations', combined: 'combined_evaluations' };
 let source = 'strava';                    // 現在の評価ソース。起動時は常に Strava(永続化しない)
 const evalDir = () => EVAL_DIRS[source];  // 現在のソースに対応する評価ディレクトリを返す
 const $ = (id) => document.getElementById(id);                  // 要素取得の短縮形
@@ -112,9 +113,12 @@ async function showDate(iso) {
   if (res.status === 404) {
     // ファイルが存在しない = その日の評価が未生成。ソースごとに案内を変える
     $('status').textContent = '';
-    $('content').innerHTML = source === 'garmin'
-      ? '<p>この日の Garmin版評価はありません。Mac で <code>garmin_eval.py</code> を実行して生成してください。</p>'
-      : '<p>この日の評価はありません。昨日の分が未生成であれば「実行」で routine を起動できます。</p>';
+    const msg = {
+      garmin: 'この日の Garmin版評価はありません。Mac で <code>garmin_eval.py</code> を実行して生成してください。',
+      combined: 'この日の統合版はありません。統合版は Strava版・Garmin版の両方が揃った日にのみ生成されます。',
+      strava: 'この日の評価はありません。昨日の分が未生成であれば「実行」で routine を起動できます。',
+    };
+    $('content').innerHTML = '<p>' + msg[source] + '</p>';
     return;
   }
   if (res.status === 401 || res.status === 403) {
@@ -225,9 +229,11 @@ async function runRoutine() {
 // 「実行」ボタンの有効/無効をソースに応じて切替える。
 // Garmin版はPWAから生成できない(ローカル garmin_eval.py 依存)ため Garmin タブでは無効化する。
 function updateRunButton() {
-  const isGarmin = source === 'garmin';
-  $('run').disabled = isGarmin;
-  $('run').title = isGarmin ? 'Garmin版はMacの garmin_eval.py で生成します' : '';
+  const canRun = source === 'strava';   // 実行ボタンで起動できる routine は現状 Strava版のみ
+  $('run').disabled = !canRun;
+  $('run').title = canRun ? ''
+    : source === 'garmin' ? 'Garmin版はMacの garmin_eval.py で生成します'
+    : '統合版は Strava版・Garmin版が揃うと自動生成されます';
 }
 
 // ===== イベントハンドラー =====
@@ -241,11 +247,13 @@ function setSource(next) {
   source = next;
   $('tab-strava').setAttribute('aria-pressed', String(source === 'strava'));
   $('tab-garmin').setAttribute('aria-pressed', String(source === 'garmin'));
+  $('tab-combined').setAttribute('aria-pressed', String(source === 'combined'));
   updateRunButton();
   showDate($('date').value || jstToday());
 }
 $('tab-strava').onclick = () => setSource('strava');
 $('tab-garmin').onclick = () => setSource('garmin');
+$('tab-combined').onclick = () => setSource('combined');
 $('settings').onclick = () => { $('pat').value = pat(); $('dlg').showModal(); }; // ⚙︎: 設定ダイアログを開く
 // 保存: 入力された PAT を localStorage に保存して再起動
 $('patSave').onclick = () => {

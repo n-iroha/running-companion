@@ -57,7 +57,10 @@
 const REPO = 'n-iroha/Running';          // 評価ファイルとワークフローを置いている GitHub リポジトリ
 const WORKFLOW = 'run-eval.yml';         // 「実行」ボタンで起動する GitHub Actions ワークフロー
 const API = 'https://api.github.com';    // GitHub REST API のベースURL
-const EVAL_DIR = 'daily_evaluations';    // リポジトリ内で日次評価(eval_YYYY-MM-DD.md)を格納するディレクトリ
+// 評価ソースごとの格納ディレクトリ。ファイル名は両ソースとも eval_YYYY-MM-DD.md で共通
+const EVAL_DIRS = { strava: 'daily_evaluations', garmin: 'garmin_evaluations' };
+let source = 'strava';                    // 現在の評価ソース。起動時は常に Strava(永続化しない)
+const evalDir = () => EVAL_DIRS[source];  // 現在のソースに対応する評価ディレクトリを返す
 const $ = (id) => document.getElementById(id);                  // 要素取得の短縮形
 const pat = () => localStorage.getItem('gh_pat') || '';         // 保存済みの GitHub Personal Access Token を返す
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));    // 指定ミリ秒待つ(ポーリング用)
@@ -92,7 +95,7 @@ async function showDate(iso) {
   let res;
   try {
     // Contents API から eval_YYYY-MM-DD.md を生の Markdown テキストとして取得
-    res = await gh(`/repos/${REPO}/contents/${EVAL_DIR}/eval_${iso}.md`,
+    res = await gh(`/repos/${REPO}/contents/${evalDir()}/eval_${iso}.md`,
       { headers: { 'Accept': 'application/vnd.github.raw+json' } });
   } catch {
     // fetch 自体の失敗 = ネットワーク未接続
@@ -122,7 +125,7 @@ async function showDate(iso) {
 // 起動時に呼ばれる。評価ディレクトリの一覧から最新日付の評価を探して表示する
 async function showLatest() {
   try {
-    const res = await gh(`/repos/${REPO}/contents/${EVAL_DIR}`);
+    const res = await gh(`/repos/${REPO}/contents/${evalDir()}`);
     if (res.status === 401 || res.status === 403) {
       $('status').textContent = 'トークンを確認してください';
       $('dlg').showModal();
@@ -197,7 +200,7 @@ async function runRoutine() {
   $('status').textContent = `routine実行中… eval_${target}.md の生成を待っています(画面を開いたままにしてください)`;
   for (let i = 0; i < 30; i++) {
     await sleep(30000);
-    const check = await gh(`/repos/${REPO}/contents/${EVAL_DIR}/eval_${target}.md`).catch(() => null);
+    const check = await gh(`/repos/${REPO}/contents/${EVAL_DIRS.strava}/eval_${target}.md`).catch(() => null);
     if (check && check.ok) {
       // ファイルが見つかったら表示して終了
       $('status').textContent = '';

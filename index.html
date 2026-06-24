@@ -21,6 +21,9 @@
   #run:disabled { opacity: .5; }
   #date { font-size: 16px; padding: 6px; border-radius: 8px; border: 1px solid #8884; background: transparent; flex: 1; min-width: 130px; }
   #status { font-size: 14px; opacity: .8; min-height: 1.4em; padding: 4px 0; }
+  #tabs { display: flex; gap: 4px; margin: 4px 0 8px; }
+  #tabs button { flex: 1; font-size: 15px; padding: 6px 0; border: 1px solid #8884; background: transparent; opacity: .6; }
+  #tabs button[aria-pressed="true"] { opacity: 1; font-weight: 600; border-color: #ff5a1f; color: #ff5a1f; }
   #content { line-height: 1.75; word-break: break-word; }
   #content table { border-collapse: collapse; display: block; overflow-x: auto; }
   #content th, #content td { border: 1px solid #8886; padding: 4px 8px; white-space: nowrap; }
@@ -39,6 +42,10 @@
   <button id="run">実行</button>
   <button id="settings" aria-label="設定">⚙︎</button>
 </header>
+<div id="tabs">
+  <button id="tab-strava" aria-pressed="true">Strava</button>
+  <button id="tab-garmin" aria-pressed="false">Garmin</button>
+</div>
 <div id="status"></div>
 <article id="content"></article>
 
@@ -57,7 +64,10 @@
 const REPO = 'n-iroha/Running';          // 評価ファイルとワークフローを置いている GitHub リポジトリ
 const WORKFLOW = 'run-eval.yml';         // 「実行」ボタンで起動する GitHub Actions ワークフロー
 const API = 'https://api.github.com';    // GitHub REST API のベースURL
-const EVAL_DIR = 'daily_evaluations';    // リポジトリ内で日次評価(eval_YYYY-MM-DD.md)を格納するディレクトリ
+// 評価ソースごとの格納ディレクトリ。ファイル名は両ソースとも eval_YYYY-MM-DD.md で共通
+const EVAL_DIRS = { strava: 'daily_evaluations', garmin: 'garmin_evaluations' };
+let source = 'strava';                    // 現在の評価ソース。起動時は常に Strava(永続化しない)
+const evalDir = () => EVAL_DIRS[source];  // 現在のソースに対応する評価ディレクトリを返す
 const $ = (id) => document.getElementById(id);                  // 要素取得の短縮形
 const pat = () => localStorage.getItem('gh_pat') || '';         // 保存済みの GitHub Personal Access Token を返す
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));    // 指定ミリ秒待つ(ポーリング用)
@@ -92,7 +102,7 @@ async function showDate(iso) {
   let res;
   try {
     // Contents API から eval_YYYY-MM-DD.md を生の Markdown テキストとして取得
-    res = await gh(`/repos/${REPO}/contents/${EVAL_DIR}/eval_${iso}.md`,
+    res = await gh(`/repos/${REPO}/contents/${evalDir()}/eval_${iso}.md`,
       { headers: { 'Accept': 'application/vnd.github.raw+json' } });
   } catch {
     // fetch 自体の失敗 = ネットワーク未接続
@@ -100,9 +110,11 @@ async function showDate(iso) {
     return;
   }
   if (res.status === 404) {
-    // ファイルが存在しない = その日の評価が未生成
+    // ファイルが存在しない = その日の評価が未生成。ソースごとに案内を変える
     $('status').textContent = '';
-    $('content').innerHTML = '<p>この日の評価はありません。昨日の分が未生成であれば「実行」で routine を起動できます。</p>';
+    $('content').innerHTML = source === 'garmin'
+      ? '<p>この日の Garmin版評価はありません。Mac で <code>garmin_eval.py</code> を実行して生成してください。</p>'
+      : '<p>この日の評価はありません。昨日の分が未生成であれば「実行」で routine を起動できます。</p>';
     return;
   }
   if (res.status === 401 || res.status === 403) {
@@ -122,7 +134,7 @@ async function showDate(iso) {
 // 起動時に呼ばれる。評価ディレクトリの一覧から最新日付の評価を探して表示する
 async function showLatest() {
   try {
-    const res = await gh(`/repos/${REPO}/contents/${EVAL_DIR}`);
+    const res = await gh(`/repos/${REPO}/contents/${evalDir()}`);
     if (res.status === 401 || res.status === 403) {
       $('status').textContent = 'トークンを確認してください';
       $('dlg').showModal();
@@ -165,13 +177,13 @@ async function runRoutine() {
     });
   } catch {
     $('status').textContent = 'オフラインです';
-    $('run').disabled = false;
+    updateRunButton();
     return;
   }
   // dispatch API は成功すると 204 No Content を返す。それ以外は起動失敗
   if (res.status !== 204) {
     $('status').textContent = `起動失敗: HTTP ${res.status}`;
-    $('run').disabled = false;
+    updateRunButton();
     return;
   }
   // --- 第1段階: ワークフロー run の完了を待つ(10秒間隔 × 最大30回 = 最大5分) ---
@@ -191,22 +203,31 @@ async function runRoutine() {
     }
     $('status').textContent = `起動中…(${run.status})`;
   }
-  if (!fired) { $('run').disabled = false; if (!$('status').textContent.includes('失敗')) $('status').textContent = '起動確認タイムアウト'; return; }
+  if (!fired) { updateRunButton(); if (!$('status').textContent.includes('失敗')) $('status').textContent = '起動確認タイムアウト'; return; }
   // --- 第2段階: 対象日の評価ファイルがコミットされるのを待つ(30秒間隔 × 最大30回 = 最大15分) ---
   // target は dispatch 時に渡した選択日。同じ日の eval が生成されるのを待つ
   $('status').textContent = `routine実行中… eval_${target}.md の生成を待っています(画面を開いたままにしてください)`;
   for (let i = 0; i < 30; i++) {
     await sleep(30000);
-    const check = await gh(`/repos/${REPO}/contents/${EVAL_DIR}/eval_${target}.md`).catch(() => null);
+    // routine(実行ボタン)は現状 Strava 専用なので、参照先は Strava 固定
+    const check = await gh(`/repos/${REPO}/contents/${EVAL_DIRS.strava}/eval_${target}.md`).catch(() => null);
     if (check && check.ok) {
       // ファイルが見つかったら表示して終了
       $('status').textContent = '';
-      $('run').disabled = false;
+      updateRunButton();
       return showDate(target);
     }
   }
   $('status').textContent = '15分待ちましたが評価が見つかりません。しばらく後に日付を選び直してください。';
-  $('run').disabled = false;
+  updateRunButton();
+}
+
+// 「実行」ボタンの有効/無効をソースに応じて切替える。
+// Garmin版はPWAから生成できない(ローカル garmin_eval.py 依存)ため Garmin タブでは無効化する。
+function updateRunButton() {
+  const isGarmin = source === 'garmin';
+  $('run').disabled = isGarmin;
+  $('run').title = isGarmin ? 'Garmin版はMacの garmin_eval.py で生成します' : '';
 }
 
 // ===== イベントハンドラー =====
@@ -214,6 +235,17 @@ $('prev').onclick = () => showDate(addDays($('date').value || jstToday(), -1)); 
 $('next').onclick = () => showDate(addDays($('date').value || jstToday(), 1));   // ▶: 翌日へ
 $('date').onchange = () => $('date').value && showDate($('date').value);         // 日付ピッカーで直接選択
 $('run').onclick = runRoutine;                                                   // 実行: routine を起動
+// ソース切替。選択中の日付を維持したまま、新ソースの同じ日付の評価を再取得する
+function setSource(next) {
+  if (source === next) return;
+  source = next;
+  $('tab-strava').setAttribute('aria-pressed', String(source === 'strava'));
+  $('tab-garmin').setAttribute('aria-pressed', String(source === 'garmin'));
+  updateRunButton();
+  showDate($('date').value || jstToday());
+}
+$('tab-strava').onclick = () => setSource('strava');
+$('tab-garmin').onclick = () => setSource('garmin');
 $('settings').onclick = () => { $('pat').value = pat(); $('dlg').showModal(); }; // ⚙︎: 設定ダイアログを開く
 // 保存: 入力された PAT を localStorage に保存して再起動
 $('patSave').onclick = () => {
@@ -228,6 +260,7 @@ $('patClear').onclick = () => { localStorage.removeItem('gh_pat'); $('pat').valu
 // PAT があれば最新の評価を表示、なければ設定ダイアログを開く
 function boot() {
   if (!pat()) { $('dlg').showModal(); return; }
+  updateRunButton();
   showLatest();
 }
 // PWA としてオフラインキャッシュを使うための Service Worker を登録

@@ -222,8 +222,13 @@ async function runRoutine() {
   $('run').disabled = false;
 }
 
-// 「実行」ボタンの有効/無効をソースに応じて切替える(Task 4 で本実装)
-function updateRunButton() {}
+// 「実行」ボタンの有効/無効をソースに応じて切替える。
+// Garmin版はPWAから生成できない(ローカル garmin_eval.py 依存)ため Garmin タブでは無効化する。
+function updateRunButton() {
+  const isGarmin = source === 'garmin';
+  $('run').disabled = isGarmin;
+  $('run').title = isGarmin ? 'Garmin版はMacの garmin_eval.py で生成します' : '';
+}
 
 // ===== イベントハンドラー =====
 $('prev').onclick = () => showDate(addDays($('date').value || jstToday(), -1));  // ◀: 前日へ
@@ -255,6 +260,7 @@ $('patClear').onclick = () => { localStorage.removeItem('gh_pat'); $('pat').valu
 // PAT があれば最新の評価を表示、なければ設定ダイアログを開く
 function boot() {
   if (!pat()) { $('dlg').showModal(); return; }
+  updateRunButton();
   showLatest();
 }
 // PWA としてオフラインキャッシュを使うための Service Worker を登録

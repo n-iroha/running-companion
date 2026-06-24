@@ -177,13 +177,13 @@ async function runRoutine() {
     });
   } catch {
     $('status').textContent = 'オフラインです';
-    $('run').disabled = false;
+    updateRunButton();
     return;
   }
   // dispatch API は成功すると 204 No Content を返す。それ以外は起動失敗
   if (res.status !== 204) {
     $('status').textContent = `起動失敗: HTTP ${res.status}`;
-    $('run').disabled = false;
+    updateRunButton();
     return;
   }
   // --- 第1段階: ワークフロー run の完了を待つ(10秒間隔 × 最大30回 = 最大5分) ---
@@ -203,7 +203,7 @@ async function runRoutine() {
     }
     $('status').textContent = `起動中…(${run.status})`;
   }
-  if (!fired) { $('run').disabled = false; if (!$('status').textContent.includes('失敗')) $('status').textContent = '起動確認タイムアウト'; return; }
+  if (!fired) { updateRunButton(); if (!$('status').textContent.includes('失敗')) $('status').textContent = '起動確認タイムアウト'; return; }
   // --- 第2段階: 対象日の評価ファイルがコミットされるのを待つ(30秒間隔 × 最大30回 = 最大15分) ---
   // target は dispatch 時に渡した選択日。同じ日の eval が生成されるのを待つ
   $('status').textContent = `routine実行中… eval_${target}.md の生成を待っています(画面を開いたままにしてください)`;
@@ -214,12 +214,12 @@ async function runRoutine() {
     if (check && check.ok) {
       // ファイルが見つかったら表示して終了
       $('status').textContent = '';
-      $('run').disabled = false;
+      updateRunButton();
       return showDate(target);
     }
   }
   $('status').textContent = '15分待ちましたが評価が見つかりません。しばらく後に日付を選び直してください。';
-  $('run').disabled = false;
+  updateRunButton();
 }
 
 // 「実行」ボタンの有効/無効をソースに応じて切替える。

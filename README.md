@@ -1,6 +1,6 @@
 # Running Companion
 
-個人用PWA。前日ラン評価routineの手動実行と、`n-iroha/Running` の `daily_evaluations/eval_YYYY-MM-DD.md` のプレビューを行う。
+個人用PWA。前日ラン評価routineの手動実行と、`n-iroha/Running` の `strava_evaluations/eval_YYYY-MM-DD.md` のプレビューを行う。
 
 **URL:** https://n-iroha.github.io/running-companion/
 

@@ -66,7 +66,7 @@ const REPO = 'n-iroha/Running';          // 評価ファイルとワークフロ
 const WORKFLOW = 'run-eval.yml';         // 「実行」ボタンで起動する GitHub Actions ワークフロー
 const API = 'https://api.github.com';    // GitHub REST API のベースURL
 // 評価ソースごとの格納ディレクトリ。ファイル名は両ソースとも eval_YYYY-MM-DD.md で共通
-const EVAL_DIRS = { strava: 'daily_evaluations', garmin: 'garmin_evaluations', combined: 'combined_evaluations' };
+const EVAL_DIRS = { strava: 'strava_evaluations', garmin: 'garmin_evaluations', combined: 'combined_evaluations' };
 let source = 'strava';                    // 現在の評価ソース。起動時は常に Strava(永続化しない)
 const evalDir = () => EVAL_DIRS[source];  // 現在のソースに対応する評価ディレクトリを返す
 const $ = (id) => document.getElementById(id);                  // 要素取得の短縮形
